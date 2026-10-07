@@ -43,7 +43,9 @@ protocol DownloaderClient: Sendable {
     func pause(id: String) async throws
     func resume(id: String) async throws
     func delete(id: String) async throws
-    func deleteHistory(id: String) async throws
+    /// True when removing a history entry can also delete the downloaded files.
+    var deletesFilesWithHistory: Bool { get }
+    func deleteHistory(id: String, deleteFiles: Bool) async throws
     /// 0 means unlimited.
     func setSpeedLimit(bytesPerSec: Int64) async throws
     func addURL(_ url: String, name: String?) async throws

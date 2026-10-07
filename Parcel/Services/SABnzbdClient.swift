@@ -135,8 +135,12 @@ struct SABnzbdClient: DownloaderClient {
         try await call("queue", [("name", "delete"), ("value", id), ("del_files", "1")])
     }
 
-    func deleteHistory(id: String) async throws {
-        try await call("history", [("name", "delete"), ("value", id), ("del_files", "1")])
+    var deletesFilesWithHistory: Bool { true }
+
+    func deleteHistory(id: String, deleteFiles: Bool) async throws {
+        var extra: [(String, String)] = [("name", "delete"), ("value", id)]
+        if deleteFiles { extra.append(("del_files", "1")) }
+        try await call("history", extra)
     }
 
     func setSpeedLimit(bytesPerSec: Int64) async throws {

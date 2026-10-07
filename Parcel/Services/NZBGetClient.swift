@@ -135,7 +135,11 @@ struct NZBGetClient: DownloaderClient {
     func pause(id: String) async throws { try await edit("GroupPause", id: id) }
     func resume(id: String) async throws { try await edit("GroupResume", id: id) }
     func delete(id: String) async throws { try await edit("GroupDelete", id: id) }
-    func deleteHistory(id: String) async throws { try await edit("HistoryDelete", id: id) }
+    var deletesFilesWithHistory: Bool { false }
+
+    func deleteHistory(id: String, deleteFiles: Bool) async throws {
+        try await edit("HistoryDelete", id: id)
+    }
 
     func setSpeedLimit(bytesPerSec: Int64) async throws {
         // NZBGet's `rate` call takes KB/s; 0 removes the limit.

@@ -56,9 +56,11 @@ final class DownloadsViewModel: ObservableObject {
         await run { try await client.delete(id: item.id) }
     }
 
-    func deleteHistory(_ item: HistoryItem) async {
+    var canDeleteFilesWithHistory: Bool { client.deletesFilesWithHistory }
+
+    func deleteHistory(_ item: HistoryItem, deleteFiles: Bool = true) async {
         do {
-            try await client.deleteHistory(id: item.id)
+            try await client.deleteHistory(id: item.id, deleteFiles: deleteFiles)
             history.removeAll { $0.id == item.id }
         } catch {
             report(error)
@@ -100,6 +102,7 @@ private struct DownloadsContent: View {
     @StateObject private var vm: DownloadsViewModel
     @State private var tab: Tab = .queue
     @State private var pendingDelete: DownloadItem?
+    @State private var pendingFileDelete: HistoryItem?
 
     enum Tab: String, CaseIterable, Identifiable {
         case queue = "Queue"
@@ -196,6 +199,18 @@ private struct DownloadsContent: View {
         } message: { item in
             Text(item.name)
         }
+        .alert(
+            "Delete the downloaded files too?",
+            isPresented: Binding(get: { pendingFileDelete != nil }, set: { if !$0 { pendingFileDelete = nil } }),
+            presenting: pendingFileDelete
+        ) { item in
+            Button("Cancel", role: .cancel) {}
+            Button("Delete Files", role: .destructive) {
+                Task { await vm.deleteHistory(item, deleteFiles: true) }
+            }
+        } message: { item in
+            Text("\(item.name)\n\nThe entry and its files will be removed. This can't be undone.")
+        }
     }
 
     // MARK: Pieces
@@ -287,6 +302,20 @@ private struct DownloadsContent: View {
                         Task { await vm.deleteHistory(item) }
                     } label: {
                         Label("Delete", systemImage: "trash")
+                    }
+                }
+                .contextMenu {
+                    Button(role: .destructive) {
+                        Task { await vm.deleteHistory(item, deleteFiles: false) }
+                    } label: {
+                        Label("Remove from history", systemImage: "trash")
+                    }
+                    if vm.canDeleteFilesWithHistory {
+                        Button(role: .destructive) {
+                            pendingFileDelete = item
+                        } label: {
+                            Label("Remove and delete files", systemImage: "trash.fill")
+                        }
                     }
                 }
         }
