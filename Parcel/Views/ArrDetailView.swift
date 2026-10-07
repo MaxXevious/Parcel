@@ -19,6 +19,7 @@ struct ArrDetailView: View {
     @State private var notice: String?
     @State private var errorMessage: String?
     @State private var confirmDelete = false
+    @State private var episodeTarget: EpisodeTarget?
 
     init(item: ArrItem, kind: ServerKind, client: ArrClient, onChange: @escaping () -> Void) {
         self.item = item
@@ -104,6 +105,9 @@ struct ArrDetailView: View {
             }
         }
         .navigationTitle(item.title)
+        .sheet(item: $episodeTarget) { target in
+            EpisodeDetailView(target: target, client: client)
+        }
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadEpisodes() }
         .confirmationDialog("Remove \(item.title)?", isPresented: $confirmDelete, titleVisibility: .visible) {
@@ -142,6 +146,12 @@ struct ArrDetailView: View {
             }
             Image(systemName: entry.hasFile ? "checkmark.circle.fill" : "circle")
                 .foregroundStyle(entry.hasFile ? Color.green : Color.secondary)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if let episodeID = entry.episodeID {
+                episodeTarget = EpisodeTarget(seriesID: item.arrID, episodeID: episodeID, seriesTitle: item.title)
+            }
         }
         .swipeActions(edge: .trailing) {
             Button {
@@ -391,5 +401,173 @@ private struct AddOptionsView: View {
             if !isCancellation(error) { errorMessage = error.localizedDescription }
         }
         isAdding = false
+    }
+}
+
+// MARK: - Episode details
+
+struct EpisodeTarget: Identifiable {
+    let seriesID: Int
+    let episodeID: Int
+    let seriesTitle: String
+    var id: Int { episodeID }
+}
+
+struct EpisodeDetailView: View {
+    let target: EpisodeTarget
+    let client: ArrClient
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var info: EpisodeInfo?
+    @State private var errorMessage: String?
+    @State private var notice: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let info {
+                    details(info)
+                } else if let errorMessage {
+                    ContentUnavailableView(
+                        "Couldn't load the episode",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(errorMessage)
+                    )
+                } else {
+                    ProgressView("Loading…")
+                }
+            }
+            .navigationTitle(target.seriesTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .task { await load() }
+            .alert(
+                "Search",
+                isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(notice ?? "")
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func details(_ info: EpisodeInfo) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if let url = info.screenshotURL {
+                    Color.clear
+                        .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                        .overlay {
+                            AsyncImage(url: url) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image.resizable().scaledToFill()
+                                default:
+                                    Color.gray.opacity(0.2)
+                                }
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(info.code)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(info.title)
+                        .font(.title2.weight(.bold))
+                    if let finale = info.finaleLabel {
+                        Text(finale)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.orange.opacity(0.2), in: Capsule())
+                    }
+                }
+
+                VStack(spacing: 8) {
+                    fact("Aired", info.airDate.map { $0.formatted(date: .long, time: .omitted) } ?? "TBA")
+                    if let minutes = info.runtimeMinutes {
+                        fact("Runtime", "\(minutes) min")
+                    }
+                    fact("Status", status(info))
+                }
+
+                if let overview = info.overview, !overview.isEmpty {
+                    Text(overview)
+                } else {
+                    Text("There's no synopsis for this episode on TheTVDB yet.")
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(spacing: 10) {
+                    if let url = info.tvdbURL {
+                        Link(destination: url) {
+                            Label("Open on TheTVDB", systemImage: "safari")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    Button {
+                        Task { await search() }
+                    } label: {
+                        Label("Search for this episode", systemImage: "magnifyingglass")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .padding()
+        }
+    }
+
+    private func fact(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+        }
+        .font(.subheadline)
+    }
+
+    private func status(_ info: EpisodeInfo) -> String {
+        if info.hasFile { return "Downloaded" }
+        return info.monitored ? "Monitored, not downloaded yet" : "Not monitored"
+    }
+
+    private func load() async {
+        do {
+            info = try await client.episodeInfo(episodeID: target.episodeID, seriesID: target.seriesID)
+        } catch {
+            if !isCancellation(error) { errorMessage = error.localizedDescription }
+        }
+    }
+
+    private func search() async {
+        let entry = ArrEntry(
+            id: "ep-\(target.episodeID)",
+            itemID: target.seriesID,
+            episodeID: target.episodeID,
+            title: target.seriesTitle,
+            detail: nil,
+            date: nil,
+            hasFile: false,
+            monitored: true,
+            season: nil,
+            number: nil
+        )
+        do {
+            try await client.search(entry: entry)
+            notice = "Search started."
+        } catch {
+            if !isCancellation(error) { notice = "Couldn't start the search: \(error.localizedDescription)" }
+        }
     }
 }

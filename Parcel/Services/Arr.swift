@@ -43,6 +43,8 @@ struct ArrQueueEntry: Identifiable, Hashable {
     var progress: Double
     var timeLeft: String?
     var warning: String?
+    var seriesID: Int?
+    var episodeID: Int?
 }
 
 struct ArrQualityProfile: Identifiable, Decodable, Hashable {
@@ -53,6 +55,30 @@ struct ArrQualityProfile: Identifiable, Decodable, Hashable {
 struct ArrAddOptions {
     var qualityProfiles: [ArrQualityProfile]
     var rootFolders: [String]
+}
+
+/// Details for a single episode. Sonarr stores TheTVDB's data, so this is what TheTVDB lists.
+struct EpisodeInfo {
+    var seriesTitle: String
+    var title: String
+    var code: String
+    var overview: String?
+    var airDate: Date?
+    var runtimeMinutes: Int?
+    var hasFile: Bool
+    var monitored: Bool
+    var finaleType: String?
+    var screenshotURL: URL?
+    var tvdbURL: URL?
+
+    var finaleLabel: String? {
+        switch finaleType {
+        case "series": return "Series finale"
+        case "season": return "Season finale"
+        case "midseason": return "Mid-season finale"
+        default: return nil
+        }
+    }
 }
 
 protocol ArrClient: Sendable {
@@ -68,6 +94,7 @@ protocol ArrClient: Sendable {
     func search(entry: ArrEntry) async throws
     func searchAllMissing() async throws
     func episodes(for item: ArrItem) async throws -> [ArrEntry]
+    func episodeInfo(episodeID: Int, seriesID: Int) async throws -> EpisodeInfo
     func setMonitored(_ monitored: Bool, for item: ArrItem) async throws
     func delete(_ item: ArrItem, deleteFiles: Bool) async throws
 }
@@ -166,6 +193,8 @@ struct ArrRootFolder: Decodable {
 
 struct ArrQueueRecord: Decodable {
     let id: Int?
+    let seriesId: Int?
+    let episodeId: Int?
     let title: String?
     let status: String?
     let size: Double?
@@ -206,7 +235,9 @@ struct ArrQueueRecord: Decodable {
             status: (status ?? "").capitalized,
             progress: total > 0 ? min(max(1 - left / total, 0), 1) : 0,
             timeLeft: timeleft,
-            warning: trackedDownloadStatus == "warning" ? (errorMessage ?? "Warning") : nil
+            warning: trackedDownloadStatus == "warning" ? (errorMessage ?? "Warning") : nil,
+            seriesID: seriesId,
+            episodeID: episodeId
         )
     }
 }

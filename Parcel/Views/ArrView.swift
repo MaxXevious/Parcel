@@ -113,6 +113,7 @@ struct ArrContentView: View {
     @State private var filter = ""
     @State private var showingAdd = false
     @State private var confirmSearchAll = false
+    @State private var episodeTarget: EpisodeTarget?
 
     init(kind: ServerKind, client: ArrClient) {
         self.kind = kind
@@ -141,6 +142,9 @@ struct ArrContentView: View {
                 content
             }
             .listStyle(.plain)
+            .sheet(item: $episodeTarget) { target in
+                EpisodeDetailView(target: target, client: vm.client)
+            }
             .overlay {
                 if vm.isLoading && !vm.loaded.contains(section) {
                     ProgressView()
@@ -266,12 +270,35 @@ struct ArrContentView: View {
             Text("Nothing is downloading.").foregroundStyle(.secondary)
         }
         ForEach(vm.queue) { entry in
-            ArrQueueRow(entry: entry)
+            if kind == .sonarr, let seriesID = entry.seriesID, let episodeID = entry.episodeID {
+                Button {
+                    episodeTarget = EpisodeTarget(seriesID: seriesID, episodeID: episodeID, seriesTitle: entry.title)
+                } label: {
+                    ArrQueueRow(entry: entry)
+                }
+                .buttonStyle(.plain)
+            } else {
+                ArrQueueRow(entry: entry)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func tappable(_ entry: ArrEntry) -> some View {
+        if kind == .sonarr, let episodeID = entry.episodeID {
+            Button {
+                episodeTarget = EpisodeTarget(seriesID: entry.itemID, episodeID: episodeID, seriesTitle: entry.title)
+            } label: {
+                EntryRow(entry: entry)
+            }
+            .buttonStyle(.plain)
+        } else {
+            EntryRow(entry: entry)
         }
     }
 
     private func entryRow(_ entry: ArrEntry) -> some View {
-        EntryRow(entry: entry)
+        tappable(entry)
             .swipeActions(edge: .trailing) {
                 Button {
                     Task { await vm.search(entry) }
@@ -356,6 +383,7 @@ private struct EntryRow: View {
             Image(systemName: icon)
                 .foregroundStyle(entry.hasFile ? Color.green : Color.secondary)
         }
+        .contentShape(Rectangle())
     }
 
     private var icon: String {
@@ -393,6 +421,7 @@ private struct ArrQueueRow: View {
                     .foregroundStyle(.orange)
             }
         }
+        .contentShape(Rectangle())
         .padding(.vertical, 2)
     }
 }

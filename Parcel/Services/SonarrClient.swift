@@ -32,6 +32,12 @@ struct SonarrClient: ArrClient {
         let hasFile: Bool?
         let monitored: Bool?
         let series: SeriesRef?
+        let tvdbId: Int?
+        let airDate: String?
+        let runtime: Int?
+        let overview: String?
+        let finaleType: String?
+        let images: [ArrImage]?
 
         struct SeriesRef: Decodable {
             let title: String?
@@ -176,6 +182,35 @@ struct SonarrClient: ArrClient {
     func episodes(for item: ArrItem) async throws -> [ArrEntry] {
         let list = try await api.fetch([Episode].self, "/api/v3/episode", query: [("seriesId", String(item.arrID))])
         return list.map { entry(from: $0, seriesTitle: item.title) }
+    }
+
+    func episodeInfo(episodeID: Int, seriesID: Int) async throws -> EpisodeInfo {
+        async let episodeTask = api.fetch(Episode.self, "/api/v3/episode/\(episodeID)")
+        async let seriesTask = api.fetch(Series.self, "/api/v3/series/\(seriesID)")
+        let (episode, series) = try await (episodeTask, seriesTask)
+
+        // TheTVDB redirects these ids to the right page: the episode if we know it, otherwise the show.
+        var tvdbURL: URL?
+        if let id = episode.tvdbId, id > 0 {
+            tvdbURL = URL(string: "https://thetvdb.com/dereferrer/episode/\(id)")
+        } else if let id = series.tvdbId, id > 0 {
+            tvdbURL = URL(string: "https://thetvdb.com/dereferrer/series/\(id)")
+        }
+
+        let screenshot = episode.images?.first(where: { $0.coverType == "screenshot" })
+        return EpisodeInfo(
+            seriesTitle: series.title ?? "Unknown series",
+            title: episode.title ?? "TBA",
+            code: episodeCode(episode.seasonNumber, episode.episodeNumber),
+            overview: episode.overview,
+            airDate: DateParse.iso(episode.airDateUtc) ?? DateParse.iso(episode.airDate),
+            runtimeMinutes: (episode.runtime ?? 0) > 0 ? episode.runtime : nil,
+            hasFile: episode.hasFile ?? false,
+            monitored: episode.monitored ?? false,
+            finaleType: episode.finaleType,
+            screenshotURL: api.poster(from: screenshot.map { [$0] }),
+            tvdbURL: tvdbURL
+        )
     }
 
     func setMonitored(_ monitored: Bool, for item: ArrItem) async throws {
