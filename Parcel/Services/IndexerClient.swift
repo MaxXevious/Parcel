@@ -13,23 +13,61 @@ struct NZBResult: Identifiable, Hashable {
     var indexer: String
 }
 
-enum IndexerCategory: String, CaseIterable, Identifiable {
-    case all = "All"
-    case movies = "Movies"
-    case tv = "TV"
-    case audio = "Audio"
-    case books = "Books"
+/// A Newznab category (for example TV, id 5000) and its sub-categories (HD, id 5040).
+struct NZBCategory: Identifiable, Hashable {
+    let id: String
+    var name: String
+    var children: [NZBCategory] = []
 
-    var id: String { rawValue }
+    /// Standard Newznab categories, used when an indexer doesn't report its own list.
+    static let standard: [NZBCategory] = [
+        NZBCategory(id: "2000", name: "Movies", children: [
+            NZBCategory(id: "2030", name: "SD"),
+            NZBCategory(id: "2040", name: "HD"),
+            NZBCategory(id: "2045", name: "UHD"),
+            NZBCategory(id: "2050", name: "BluRay")
+        ]),
+        NZBCategory(id: "3000", name: "Audio", children: [
+            NZBCategory(id: "3010", name: "MP3"),
+            NZBCategory(id: "3030", name: "Audiobook"),
+            NZBCategory(id: "3040", name: "Lossless")
+        ]),
+        NZBCategory(id: "4000", name: "PC"),
+        NZBCategory(id: "5000", name: "TV", children: [
+            NZBCategory(id: "5030", name: "SD"),
+            NZBCategory(id: "5040", name: "HD"),
+            NZBCategory(id: "5045", name: "UHD"),
+            NZBCategory(id: "5070", name: "Anime"),
+            NZBCategory(id: "5080", name: "Documentary")
+        ]),
+        NZBCategory(id: "7000", name: "Books", children: [
+            NZBCategory(id: "7010", name: "Mags"),
+            NZBCategory(id: "7020", name: "EBook"),
+            NZBCategory(id: "7030", name: "Comics")
+        ]),
+        NZBCategory(id: "8000", name: "Other")
+    ]
 
-    /// Newznab top-level category codes.
-    var code: String? {
-        switch self {
-        case .all: return nil
-        case .movies: return "2000"
-        case .tv: return "5000"
-        case .audio: return "3000"
-        case .books: return "7000"
+    /// Combines the category lists reported by several indexers, matching on id.
+    static func merge(_ lists: [[NZBCategory]]) -> [NZBCategory] {
+        var parents: [String: NZBCategory] = [:]
+        for list in lists {
+            for parent in list {
+                if var existing = parents[parent.id] {
+                    for child in parent.children where !existing.children.contains(where: { $0.id == child.id }) {
+                        existing.children.append(child)
+                    }
+                    parents[parent.id] = existing
+                } else {
+                    parents[parent.id] = parent
+                }
+            }
+        }
+        let ordered = parents.values.sorted { (Int($0.id) ?? 0) < (Int($1.id) ?? 0) }
+        return ordered.map { parent -> NZBCategory in
+            var sorted = parent
+            sorted.children.sort { (Int($0.id) ?? 0) < (Int($1.id) ?? 0) }
+            return sorted
         }
     }
 }
@@ -61,13 +99,18 @@ struct IndexerClient: Sendable {
         return "Indexer reachable"
     }
 
+    /// The categories this indexer offers, read from its capabilities document.
+    func categories() async throws -> [NZBCategory] {
+        let data = try await http.send(URLRequest(url: try url([("t", "caps")])))
+        return CapsParser.parse(data)
+    }
+
+    /// With an empty `term` and a `category`, this returns the indexer's latest releases in that category.
     func search(_ term: String, category: String?, limit: Int = 100) async throws -> [NZBResult] {
-        var params: [(String, String)] = [
-            ("t", "search"),
-            ("q", term),
-            ("limit", String(limit)),
-            ("extended", "1")
-        ]
+        var params: [(String, String)] = [("t", "search")]
+        if !term.isEmpty { params.append(("q", term)) }
+        params.append(("limit", String(limit)))
+        params.append(("extended", "1"))
         if let category { params.append(("cat", category)) }
 
         let data = try await http.send(URLRequest(url: try url(params)))
@@ -176,6 +219,53 @@ final class NewznabParser: NSObject, XMLParserDelegate {
             current = nil
         default:
             break
+        }
+    }
+}
+
+/// Reads the `<categories>` block of a Newznab `t=caps` reply.
+final class CapsParser: NSObject, XMLParserDelegate {
+    private var categories: [NZBCategory] = []
+    private var current: NZBCategory?
+
+    static func parse(_ data: Data) -> [NZBCategory] {
+        let handler = CapsParser()
+        let parser = XMLParser(data: data)
+        parser.delegate = handler
+        _ = parser.parse()
+        return handler.categories
+    }
+
+    func parser(
+        _ parser: XMLParser,
+        didStartElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?,
+        attributes attributeDict: [String: String] = [:]
+    ) {
+        switch elementName {
+        case "category":
+            if let id = attributeDict["id"] {
+                current = NZBCategory(id: id, name: attributeDict["name"] ?? id)
+            }
+        case "subcat":
+            if let id = attributeDict["id"] {
+                current?.children.append(NZBCategory(id: id, name: attributeDict["name"] ?? id))
+            }
+        default:
+            break
+        }
+    }
+
+    func parser(
+        _ parser: XMLParser,
+        didEndElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?
+    ) {
+        if elementName == "category", let finished = current {
+            categories.append(finished)
+            current = nil
         }
     }
 }
