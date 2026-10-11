@@ -47,12 +47,22 @@ final class DownloadsViewModel: ObservableObject {
     }
 
     func toggle(_ item: DownloadItem) async {
+        // Show the change straight away; the refresh after the call confirms it.
+        if var current = snapshot, let index = current.items.firstIndex(where: { $0.id == item.id }) {
+            current.items[index].isPaused.toggle()
+            current.items[index].status = current.items[index].isPaused ? "Paused" : "Queued"
+            snapshot = current
+        }
         await run {
             if item.isPaused { try await client.resume(id: item.id) } else { try await client.pause(id: item.id) }
         }
     }
 
     func delete(_ item: DownloadItem) async {
+        if var current = snapshot {
+            current.items.removeAll { $0.id == item.id }
+            snapshot = current
+        }
         await run { try await client.delete(id: item.id) }
     }
 
@@ -190,14 +200,15 @@ private struct DownloadsContent: View {
             if tab == .history { await vm.refreshHistory() }
         }
         .confirmationDialog(
-            "Delete this download?",
+            "Cancel this download?",
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
             titleVisibility: .visible,
             presenting: pendingDelete
         ) { item in
-            Button("Delete", role: .destructive) { Task { await vm.delete(item) } }
+            Button("Cancel Download", role: .destructive) { Task { await vm.delete(item) } }
+            Button("Keep Downloading", role: .cancel) {}
         } message: { item in
-            Text(item.name)
+            Text("\(item.name)\n\nIt will be removed from the queue and won't finish downloading.")
         }
         .alert(
             "Delete the downloaded files too?",
@@ -268,12 +279,28 @@ private struct DownloadsContent: View {
                 Text("Nothing in the queue.").foregroundStyle(.secondary)
             }
             ForEach(items) { item in
-                DownloadRow(item: item)
+                DownloadRow(
+                    item: item,
+                    onToggle: { Task { await vm.toggle(item) } },
+                    onCancel: { pendingDelete = item }
+                )
+                    .contextMenu {
+                        Button {
+                            Task { await vm.toggle(item) }
+                        } label: {
+                            Label(item.isPaused ? "Resume" : "Pause", systemImage: item.isPaused ? "play.fill" : "pause.fill")
+                        }
+                        Button(role: .destructive) {
+                            pendingDelete = item
+                        } label: {
+                            Label("Cancel download", systemImage: "xmark.circle")
+                        }
+                    }
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) {
                             pendingDelete = item
                         } label: {
-                            Label("Delete", systemImage: "trash")
+                            Label("Cancel", systemImage: "xmark.circle")
                         }
                     }
                     .swipeActions(edge: .leading) {
@@ -324,23 +351,47 @@ private struct DownloadsContent: View {
 
 private struct DownloadRow: View {
     let item: DownloadItem
+    let onToggle: () -> Void
+    let onCancel: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(item.name)
-                .font(.subheadline)
-                .lineLimit(2)
-            ProgressView(value: item.progress)
-            HStack {
-                Text(item.isPaused ? "Paused" : item.status)
-                if let eta = item.eta, !eta.isEmpty, !item.isPaused {
-                    Text("· \(eta)")
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(item.name)
+                    .font(.subheadline)
+                    .lineLimit(2)
+                ProgressView(value: item.progress)
+                HStack {
+                    Text(item.isPaused ? "Paused" : item.status)
+                    if let eta = item.eta, !eta.isEmpty, !item.isPaused {
+                        Text("· \(eta)")
+                    }
+                    Spacer()
+                    Text("\(item.remainingBytes.byteString) of \(item.sizeBytes.byteString)")
                 }
-                Spacer()
-                Text("\(item.remainingBytes.byteString) of \(item.sizeBytes.byteString)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+
+            // `.borderless` keeps each button tappable on its own inside a list row.
+            Button(action: onToggle) {
+                Image(systemName: item.isPaused ? "play.circle.fill" : "pause.circle.fill")
+                    .font(.title2)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(item.isPaused ? "Resume download" : "Pause download")
+
+            Button(action: onCancel) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Cancel download")
         }
         .padding(.vertical, 2)
     }
