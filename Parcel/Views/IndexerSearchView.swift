@@ -216,21 +216,10 @@ struct IndexerSearchView: View {
                 .accessibilityLabel("Sort results")
             }
         }
-        .confirmationDialog(
-            selected?.title ?? "",
-            isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } }),
-            titleVisibility: .visible,
-            presenting: selected
-        ) { result in
-            if let profile = store.activeDownloader,
-               let client = ServiceFactory.downloader(profile, secret: store.secret(for: profile)) {
-                Button("Send to \(profile.name)") {
-                    Task { await vm.send(result, to: client, name: profile.name) }
-                }
-            }
-        } message: { _ in
-            if store.activeDownloader == nil {
-                Text("Add SABnzbd or NZBGet in Settings first, then you can send results to it.")
+        .sheet(item: $selected) { result in
+            ResultDetailView(result: result, downloaderName: store.activeDownloader?.name) {
+                selected = nil
+                sendToDownloader(result)
             }
         }
         .alert(
@@ -279,6 +268,12 @@ struct IndexerSearchView: View {
                 )
             }
         }
+    }
+
+    private func sendToDownloader(_ result: NZBResult) {
+        guard let profile = store.activeDownloader,
+              let client = ServiceFactory.downloader(profile, secret: store.secret(for: profile)) else { return }
+        Task { await vm.send(result, to: client, name: profile.name) }
     }
 
     private func runSearch() async {

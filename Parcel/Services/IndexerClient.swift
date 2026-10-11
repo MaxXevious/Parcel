@@ -11,6 +11,12 @@ struct NZBResult: Identifiable, Hashable {
     var category: String
     var grabs: Int?
     var indexer: String
+    /// Newznab category codes, such as "5000" (TV) and "5040" (TV HD).
+    var categoryIDs: [String] = []
+    /// Ids the indexer attached to the release, when it knows them.
+    var tvdbID: Int?
+    var tmdbID: Int?
+    var imdbID: String?
 }
 
 /// A Newznab category (for example TV, id 5000) and its sub-categories (HD, id 5040).
@@ -99,6 +105,20 @@ struct IndexerClient: Sendable {
         return "Indexer reachable"
     }
 
+    /// Indexers use 0 or an empty value for "unknown".
+    private static func positiveInt(_ text: String?) -> Int? {
+        guard let text, let value = Int(text.trimmingCharacters(in: .whitespaces)), value > 0 else { return nil }
+        return value
+    }
+
+    /// Accepts "133093", "0133093" or "tt0133093" and returns the 7-digit form IMDb addresses use.
+    private static func imdbDigits(_ text: String?) -> String? {
+        guard let text else { return nil }
+        let digits = text.filter { $0.isNumber }
+        guard !digits.isEmpty, (Int(digits) ?? 0) > 0 else { return nil }
+        return String(repeating: "0", count: max(0, 7 - digits.count)) + digits
+    }
+
     /// The categories this indexer offers, read from its capabilities document.
     func categories() async throws -> [NZBCategory] {
         let data = try await http.send(URLRequest(url: try url([("t", "caps")])))
@@ -130,7 +150,11 @@ struct IndexerClient: Sendable {
                 date: DateParse.rfc822(raw.pubDate),
                 category: raw.category,
                 grabs: raw.attrs["grabs"].flatMap { Int($0) },
-                indexer: name
+                indexer: name,
+                categoryIDs: raw.categoryIDs,
+                tvdbID: Self.positiveInt(raw.attrs["tvdbid"] ?? raw.attrs["tvdb"]),
+                tmdbID: Self.positiveInt(raw.attrs["tmdbid"] ?? raw.attrs["tmdb"]),
+                imdbID: Self.imdbDigits(raw.attrs["imdb"] ?? raw.attrs["imdbid"])
             )
         }
     }
@@ -148,6 +172,7 @@ final class NewznabParser: NSObject, XMLParserDelegate {
         var enclosureURL = ""
         var enclosureLength = ""
         var attrs: [String: String] = [:]
+        var categoryIDs: [String] = []
     }
 
     private var items: [Raw] = []
@@ -183,6 +208,7 @@ final class NewznabParser: NSObject, XMLParserDelegate {
         case "newznab:attr", "attr":
             if let key = attributeDict["name"], let value = attributeDict["value"] {
                 current?.attrs[key] = value
+                if key == "category" { current?.categoryIDs.append(value) }
             }
         case "error":
             error = attributeDict["description"] ?? "The indexer returned an error."

@@ -275,7 +275,7 @@ struct AddItemView: View {
                 }
             }
             .sheet(item: $selected) { item in
-                AddOptionsView(item: item, client: client) {
+                AddOptionsView(item: item, kind: kind, client: client) {
                     onAdded()
                     dismiss()
                 }
@@ -300,6 +300,7 @@ struct AddItemView: View {
 
 private struct AddOptionsView: View {
     let item: ArrItem
+    let kind: ServerKind
     let client: ArrClient
     let onAdded: () -> Void
 
@@ -309,6 +310,7 @@ private struct AddOptionsView: View {
     @State private var folder = ""
     @State private var isAdding = false
     @State private var errorMessage: String?
+    @State private var web: MediaLink?
 
     var body: some View {
         NavigationStack {
@@ -321,6 +323,18 @@ private struct AddOptionsView: View {
                             if let year = item.year {
                                 Text(String(year)).font(.caption).foregroundStyle(.secondary)
                             }
+                        }
+                    }
+                    if let overview = item.overview, !overview.isEmpty {
+                        Text(overview)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let link = MediaLinks.link(for: kind, externalID: item.externalID) {
+                        Button {
+                            web = link
+                        } label: {
+                            Label(link.title, systemImage: link.systemImage)
                         }
                     }
                 }
@@ -367,6 +381,10 @@ private struct AddOptionsView: View {
                         Text(errorMessage).foregroundStyle(.red)
                     }
                 }
+            }
+            .sheet(item: $web) { link in
+                SafariView(url: link.url)
+                    .ignoresSafeArea()
             }
             .navigationTitle("Add")
             .navigationBarTitleDisplayMode(.inline)
