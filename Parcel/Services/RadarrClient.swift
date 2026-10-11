@@ -173,6 +173,14 @@ struct RadarrClient: ArrClient {
         throw APIError.message("Episode details are only available for TV shows.")
     }
 
+    func releases(episodeID: Int) async throws -> [ArrRelease] {
+        throw APIError.message("Manual release search is only available for TV shows so far.")
+    }
+
+    func grab(_ release: ArrRelease) async throws {
+        throw APIError.message("Manual release search is only available for TV shows so far.")
+    }
+
     func setMonitored(_ monitored: Bool, for item: ArrItem) async throws {
         try await api.setMonitored(monitored, path: "/api/v3/movie/\(item.arrID)")
     }

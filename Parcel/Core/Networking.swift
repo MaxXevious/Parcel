@@ -89,16 +89,26 @@ final class SelfSignedDelegate: NSObject, URLSessionDelegate {
 final class HTTPClient: @unchecked Sendable {
     static let standard = HTTPClient(allowSelfSigned: false)
     static let selfSigned = HTTPClient(allowSelfSigned: true)
+    // Slow calls, such as Sonarr asking every indexer for releases, can take a minute or more.
+    private static let patientStandard = HTTPClient(allowSelfSigned: false, timeout: 120)
+    private static let patientSelfSigned = HTTPClient(allowSelfSigned: true, timeout: 120)
 
     static func shared(allowSelfSigned: Bool) -> HTTPClient {
         allowSelfSigned ? selfSigned : standard
     }
 
-    private let session: URLSession
+    /// The same kind of client, but willing to wait up to two minutes for a reply.
+    var patient: HTTPClient {
+        allowSelfSigned ? Self.patientSelfSigned : Self.patientStandard
+    }
 
-    private init(allowSelfSigned: Bool) {
+    private let session: URLSession
+    private let allowSelfSigned: Bool
+
+    private init(allowSelfSigned: Bool, timeout: TimeInterval = 20) {
+        self.allowSelfSigned = allowSelfSigned
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 20
+        config.timeoutIntervalForRequest = timeout
         session = URLSession(
             configuration: config,
             delegate: allowSelfSigned ? SelfSignedDelegate() : nil,

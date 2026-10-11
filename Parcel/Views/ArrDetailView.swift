@@ -419,6 +419,8 @@ struct EpisodeDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var info: EpisodeInfo?
+    @State private var showReleases = false
+    @State private var detent: PresentationDetent = .medium
     @State private var errorMessage: String?
     @State private var notice: String?
 
@@ -445,6 +447,13 @@ struct EpisodeDetailView: View {
                 }
             }
             .task { await load() }
+            .navigationDestination(isPresented: $showReleases) {
+                ReleaseListView(
+                    target: target,
+                    client: client,
+                    subtitle: info.map { "\($0.code) · \($0.title)" } ?? target.seriesTitle
+                )
+            }
             .alert(
                 "Search",
                 isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })
@@ -454,7 +463,7 @@ struct EpisodeDetailView: View {
                 Text(notice ?? "")
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $detent)
     }
 
     private func details(_ info: EpisodeInfo) -> some View {
@@ -508,20 +517,30 @@ struct EpisodeDetailView: View {
                 }
 
                 VStack(spacing: 10) {
+                    Button {
+                        detent = .large
+                        showReleases = true
+                    } label: {
+                        Label("Find releases manually", systemImage: "list.bullet.rectangle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button {
+                        Task { await search() }
+                    } label: {
+                        Label("Search and download automatically", systemImage: "magnifyingglass")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
                     if let url = info.tvdbURL {
                         Link(destination: url) {
                             Label("Open on TheTVDB", systemImage: "safari")
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.bordered)
                     }
-                    Button {
-                        Task { await search() }
-                    } label: {
-                        Label("Search for this episode", systemImage: "magnifyingglass")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
                 }
             }
             .padding()

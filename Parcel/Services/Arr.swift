@@ -81,6 +81,35 @@ struct EpisodeInfo {
     }
 }
 
+/// Decodes `T` when it can and quietly yields nil when it can't, so one odd item doesn't sink a whole list.
+struct Lenient<T: Decodable>: Decodable {
+    let value: T?
+
+    init(from decoder: Decoder) throws {
+        value = try? T(from: decoder)
+    }
+}
+
+/// One downloadable release an indexer offered for an episode.
+struct ArrRelease: Identifiable, Hashable {
+    var guid: String
+    var indexerID: Int
+    var indexer: String
+    var title: String
+    var quality: String
+    var sizeBytes: Int64
+    var ageMinutes: Double
+    var releaseGroup: String?
+    var language: String?
+    var isTorrent: Bool
+    var seeders: Int?
+    var approved: Bool
+    var rejections: [String]
+    var weight: Int
+
+    var id: String { "\(indexerID)|\(guid)" }
+}
+
 protocol ArrClient: Sendable {
     func testConnection() async throws -> String
     func library() async throws -> [ArrItem]
@@ -95,6 +124,8 @@ protocol ArrClient: Sendable {
     func searchAllMissing() async throws
     func episodes(for item: ArrItem) async throws -> [ArrEntry]
     func episodeInfo(episodeID: Int, seriesID: Int) async throws -> EpisodeInfo
+    func releases(episodeID: Int) async throws -> [ArrRelease]
+    func grab(_ release: ArrRelease) async throws
     func setMonitored(_ monitored: Bool, for item: ArrItem) async throws
     func delete(_ item: ArrItem, deleteFiles: Bool) async throws
 }
@@ -105,6 +136,11 @@ struct ArrHTTP: Sendable {
     let baseURL: String
     let apiKey: String
     let http: HTTPClient
+
+    /// The same connection with a long timeout, for calls where Sonarr has to wait on indexers.
+    var patient: ArrHTTP {
+        ArrHTTP(baseURL: baseURL, apiKey: apiKey, http: http.patient)
+    }
 
     func request(_ method: String, _ path: String, query: [(String, String)] = [], json: Any? = nil) throws -> URLRequest {
         let url = try URLBuilder.make(base: baseURL, path: path, query: query)

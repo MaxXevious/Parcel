@@ -213,6 +213,67 @@ struct SonarrClient: ArrClient {
         )
     }
 
+    /// Sonarr's "interactive search": asks every indexer Sonarr knows about and returns what they offered.
+    func releases(episodeID: Int) async throws -> [ArrRelease] {
+        let list = try await api.patient.fetch(
+            [Lenient<SonarrRelease>].self,
+            "/api/v3/release",
+            query: [("episodeId", String(episodeID))]
+        )
+
+        var result: [ArrRelease] = []
+        for (index, wrapper) in list.enumerated() {
+            guard let raw = wrapper.value, let guid = raw.guid, !guid.isEmpty else { continue }
+
+            let minutes: Double
+            if let value = raw.ageMinutes {
+                minutes = value.double
+            } else if let value = raw.ageHours {
+                minutes = value.double * 60
+            } else if let value = raw.age {
+                minutes = value.double * 1440
+            } else {
+                minutes = 0
+            }
+
+            var languageNames: [String] = []
+            if let many = raw.languages?.value {
+                languageNames = many.compactMap { $0.name }
+            } else if let one = raw.language?.value?.name {
+                languageNames = [one]
+            }
+
+            let group = raw.releaseGroup ?? ""
+            result.append(ArrRelease(
+                guid: guid,
+                indexerID: Int(raw.indexerId?.int64 ?? 0),
+                indexer: raw.indexer ?? "Unknown indexer",
+                title: raw.title ?? "Unknown release",
+                quality: raw.quality?.quality?.name ?? "Unknown",
+                sizeBytes: raw.size?.int64 ?? 0,
+                ageMinutes: minutes,
+                releaseGroup: group.isEmpty ? nil : group,
+                language: languageNames.isEmpty ? nil : languageNames.joined(separator: ", "),
+                isTorrent: raw.protocolName?.lowercased() == "torrent",
+                seeders: raw.seeders.map { Int($0.int64) },
+                approved: raw.approved ?? true,
+                rejections: raw.rejections ?? [],
+                weight: Int(raw.releaseWeight?.int64 ?? Int64(index))
+            ))
+        }
+        return result
+    }
+
+    /// Tells Sonarr to download this release with its own download client, so Sonarr tracks and imports it.
+    func grab(_ release: ArrRelease) async throws {
+        let body = ["guid": release.guid, "indexerId": release.indexerID] as [String: Any]
+        do {
+            try await api.patient.send("POST", "/api/v3/release", json: body)
+        } catch APIError.status(let code) where code == 404 {
+            throw APIError.message("Sonarr no longer has that search result. Search again, then pick it right away.")
+        }
+    }
+
     func setMonitored(_ monitored: Bool, for item: ArrItem) async throws {
         try await api.setMonitored(monitored, path: "/api/v3/series/\(item.arrID)")
     }
@@ -222,5 +283,44 @@ struct SonarrClient: ArrClient {
             ("deleteFiles", deleteFiles ? "true" : "false"),
             ("addImportListExclusion", "false")
         ])
+    }
+}
+
+/// A release as Sonarr reports it. Numbers use `Flex` because Sonarr versions differ on int vs. double.
+private struct SonarrRelease: Decodable {
+    struct Named: Decodable {
+        let name: String?
+    }
+
+    struct QualityBox: Decodable {
+        struct Inner: Decodable {
+            let name: String?
+        }
+        let quality: Inner?
+    }
+
+    let guid: String?
+    let indexerId: Flex?
+    let indexer: String?
+    let title: String?
+    let size: Flex?
+    let age: Flex?
+    let ageHours: Flex?
+    let ageMinutes: Flex?
+    let releaseGroup: String?
+    let quality: QualityBox?
+    let approved: Bool?
+    let rejections: [String]?
+    let protocolName: String?
+    let seeders: Flex?
+    let releaseWeight: Flex?
+    let language: Lenient<Named>?
+    let languages: Lenient<[Named]>?
+
+    enum CodingKeys: String, CodingKey {
+        case guid, indexerId, indexer, title, size, age, ageHours, ageMinutes
+        case releaseGroup, quality, approved, rejections, seeders, releaseWeight
+        case language, languages
+        case protocolName = "protocol"
     }
 }
